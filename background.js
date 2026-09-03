@@ -76,8 +76,9 @@ function isDurationString(str) {
 }
 
 // Recursively search YouTube's embedded page data for playlist video entries.
-function findPlaylistVideos(node, out) {
+function findPlaylistVideos(node, out, seen = new Set()) {
   if (!node || typeof node !== "object") return;
+
   if (node.playlistVideoRenderer) {
     const v = node.playlistVideoRenderer;
     const videoId = v.videoId;
@@ -88,30 +89,126 @@ function findPlaylistVideos(node, out) {
     if (title && isDurationString(title)) {
       title = videoId;
     }
-    if (videoId && title) out.push({ id: videoId, title: title.trim() });
+    if (videoId && title && !seen.has(videoId)) {
+      seen.add(videoId);
+      out.push({ id: videoId, title: title.trim() });
+    }
   }
+
+  if (node.lockupViewModel) {
+    const lvm = node.lockupViewModel;
+    const videoId = lvm.contentId;
+    let title = lvm.metadata &&
+                lvm.metadata.lockupMetadataViewModel &&
+                lvm.metadata.lockupMetadataViewModel.title &&
+                lvm.metadata.lockupMetadataViewModel.title.content;
+    if (!title && lvm.metadata && lvm.metadata.lockupMetadataViewModel && lvm.metadata.lockupMetadataViewModel.title && lvm.metadata.lockupMetadataViewModel.title.accessibility && lvm.metadata.lockupMetadataViewModel.title.accessibility.accessibilityData) {
+      title = lvm.metadata.lockupMetadataViewModel.title.accessibility.accessibilityData.label;
+    }
+    if (title && isDurationString(title)) {
+      title = videoId;
+    }
+    if (videoId && title && !seen.has(videoId)) {
+      seen.add(videoId);
+      out.push({ id: videoId, title: title.trim() });
+    }
+  }
+
+  if (node.videoRenderer || node.gridVideoRenderer) {
+    const v = node.videoRenderer || node.gridVideoRenderer;
+    const videoId = v.videoId;
+    let title = (v.title && v.title.runs && v.title.runs.map(r => r.text).join("")) ||
+                (v.title && v.title.simpleText) ||
+                videoId;
+    if (title && isDurationString(title)) {
+      title = videoId;
+    }
+    if (videoId && title && !seen.has(videoId)) {
+      seen.add(videoId);
+      out.push({ id: videoId, title: title.trim() });
+    }
+  }
+
   for (const key in node) {
-    findPlaylistVideos(node[key], out);
+    findPlaylistVideos(node[key], out, seen);
   }
+}
+
+function extractJsonObject(str, startPos) {
+  const openBrace = str.indexOf("{", startPos);
+  if (openBrace === -1) return null;
+  let count = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = openBrace; i < str.length; i++) {
+    const ch = str[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (!inString) {
+      if (ch === "{") count++;
+      else if (ch === "}") {
+        count--;
+        if (count === 0) {
+          return str.slice(openBrace, i + 1);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function extractPlaylistTitle(data) {
+  if (!data || typeof data !== "object") return null;
+  try {
+    if (data.metadata && data.metadata.playlistMetadataRenderer && data.metadata.playlistMetadataRenderer.title) {
+      return data.metadata.playlistMetadataRenderer.title;
+    }
+    if (data.header && data.header.playlistHeaderRenderer && data.header.playlistHeaderRenderer.title) {
+      const t = data.header.playlistHeaderRenderer.title;
+      return t.simpleText || (t.runs && t.runs.map(r => r.text).join(""));
+    }
+    if (data.sidebar && data.sidebar.playlistSidebarRenderer) {
+      const info = data.sidebar.playlistSidebarRenderer.items && data.sidebar.playlistSidebarRenderer.items[0] && data.sidebar.playlistSidebarRenderer.items[0].playlistSidebarPrimaryInfoRenderer;
+      if (info && info.title) {
+        const t = info.title;
+        return t.simpleText || (t.runs && t.runs.map(r => r.text).join(""));
+      }
+    }
+  } catch (e) {}
+  return null;
 }
 
 function parseVideosFromHtml(html) {
   const videos = [];
   const seen = new Set();
+  let playlistTitle = null;
 
-  const match = html.match(/(?:var\s+|window\["ytInitialData"\]\s*=\s*|ytInitialData\s*=\s*)({[\s\S]*?});\s*<\/script>/) ||
-                html.match(/ytInitialData\s*=\s*({[\s\S]*?});/);
-
-  if (match) {
-    try {
-      const data = JSON.parse(match[1]);
-      findPlaylistVideos(data, videos);
-    } catch (e) {
-      // Ignore JSON parse error, try regex fallback
+  const pos = html.indexOf("ytInitialData");
+  if (pos !== -1) {
+    const jsonStr = extractJsonObject(html, pos);
+    if (jsonStr) {
+      try {
+        const data = JSON.parse(jsonStr);
+        playlistTitle = extractPlaylistTitle(data);
+        findPlaylistVideos(data, videos, seen);
+      } catch (e) {
+        // Ignore JSON parse error, try fallback
+      }
     }
   }
 
-  // Regex fallback directly on HTML
+  // Regex fallback 1: playlistVideoRenderer
   if (videos.length === 0) {
     const regex = /"playlistVideoRenderer":\s*\{"videoId":"([^"]+)".*?"title":\s*\{(?:"runs":\[\{"text":"([^"]+)"\}]|"simpleText":"([^"]+)")/g;
     let m;
@@ -120,7 +217,20 @@ function parseVideosFromHtml(html) {
       const title = m[2] || m[3] || id;
       if (!seen.has(id) && !isDurationString(title)) {
         seen.add(id);
-        videos.push({ id, title });
+        videos.push({ id, title: title.trim() });
+      }
+    }
+  }
+
+  // Regex fallback 2: lockupViewModel contentId
+  if (videos.length === 0) {
+    const regexLockup = /"lockupViewModel":\s*\{[^}]*?"contentId":"([a-zA-Z0-9_-]{11})"/g;
+    let m;
+    while ((m = regexLockup.exec(html)) !== null) {
+      const id = m[1];
+      if (!seen.has(id)) {
+        seen.add(id);
+        videos.push({ id, title: id });
       }
     }
   }
@@ -135,7 +245,7 @@ function parseVideosFromHtml(html) {
     }
   });
 
-  return unique;
+  return { videos: unique, playlistTitle };
 }
 
 function extractVideosFromPage() {
@@ -146,7 +256,7 @@ function extractVideosFromPage() {
   }
 
   function getDomTitle(node) {
-    const titleEl = node.querySelector("#video-title, yt-formatted-string#video-title, a#video-title, span#video-title");
+    const titleEl = node.querySelector("#video-title, yt-formatted-string#video-title, a#video-title, span#video-title, .yt-lockup-metadata-view-model-wiz__title, h3, a[href*='watch?v=']");
     if (titleEl) {
       const attr = titleEl.getAttribute("title");
       if (attr && attr.trim() && !isDuration(attr)) return attr.trim();
@@ -183,26 +293,40 @@ function extractVideosFromPage() {
           videos.push({ id, title: title.trim() });
         }
       }
+      if (n.lockupViewModel) {
+        const lvm = n.lockupViewModel;
+        const id = lvm.contentId;
+        let title = lvm.metadata &&
+                    lvm.metadata.lockupMetadataViewModel &&
+                    lvm.metadata.lockupMetadataViewModel.title &&
+                    lvm.metadata.lockupMetadataViewModel.title.content;
+        if (title && isDuration(title)) title = id;
+        if (id && title && !seen.has(id)) {
+          seen.add(id);
+          videos.push({ id, title: title.trim() });
+        }
+      }
       for (const k in n) findVideos(n[k]);
     }
     findVideos(window.ytInitialData);
   }
 
-  // 2. Try DOM elements ytd-playlist-video-renderer
+  // 2. Try DOM elements ytd-playlist-video-renderer, yt-lockup-view-model, etc.
   if (videos.length === 0) {
     const nodes = document.querySelectorAll(
-      "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer"
+      "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, yt-lockup-view-model, ytd-playlist-panel-video-renderer"
     );
     nodes.forEach(node => {
       const link = node.querySelector("a[href*='watch?v=']");
       const title = getDomTitle(node);
 
-      if (link && title) {
+      if (link) {
         const href = link.getAttribute("href") || "";
         const match = href.match(/v=([a-zA-Z0-9_-]{11})/);
         if (match && !seen.has(match[1])) {
+          const videoTitle = title || match[1];
           seen.add(match[1]);
-          videos.push({ id: match[1], title });
+          videos.push({ id: match[1], title: videoTitle });
         }
       }
     });
@@ -241,51 +365,95 @@ async function extractFromTab(tabId) {
 }
 
 async function fetchPlaylist(rawUrl) {
-  const listId = extractPlaylistId(rawUrl) || rawUrl.trim();
+  const listId = extractPlaylistId(rawUrl);
+  if (!listId) {
+    throw new Error("Invalid playlist URL or ID.");
+  }
   const url = `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`;
 
   let videos = [];
+  let playlistTitle = null;
 
-  // Strategy 1: Check existing open YouTube tabs matching playlist
-  if (typeof chrome !== "undefined" && chrome.tabs) {
+  // Strategy 1: Direct Remote Fetch
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9"
+      }
+    });
+    if (res.ok) {
+      const html = await res.text();
+      const parsed = parseVideosFromHtml(html);
+      videos = parsed.videos;
+      playlistTitle = parsed.playlistTitle;
+
+      // InnerTube API fallback if HTML parsing returned 0 videos
+      if (videos.length === 0) {
+        const keyMatch = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/);
+        if (keyMatch) {
+          const apiKey = keyMatch[1];
+          const browseId = listId.startsWith("VL") ? listId : "VL" + listId;
+          const apiRes = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${apiKey}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            },
+            body: JSON.stringify({
+              context: {
+                client: {
+                  clientName: "WEB",
+                  clientVersion: "2.20240301.00.00",
+                  originalUrl: url,
+                  mainAppWebInfo: { graftUrl: `/playlist?list=${listId}` }
+                }
+              },
+              browseId
+            })
+          });
+          if (apiRes.ok) {
+            const json = await apiRes.json();
+            const seen = new Set();
+            findPlaylistVideos(json, videos, seen);
+            if (!playlistTitle) playlistTitle = extractPlaylistTitle(json);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("Direct remote fetch failed:", e);
+  }
+
+  // Strategy 2: Check open YouTube tab ONLY if tab URL strictly matches requested listId
+  if (videos.length === 0 && typeof chrome !== "undefined" && chrome.tabs) {
     try {
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
-        if (tab.id && tab.url && typeof tab.url === "string" && (tab.url.includes("youtube.com") || tab.url.includes("youtu.be"))) {
-          if (tab.url.includes(listId)) {
-            videos = await extractFromTab(tab.id);
-            if (videos.length > 0) break;
+        if (tab.id && tab.url && typeof tab.url === "string") {
+          const tabListId = extractPlaylistId(tab.url);
+          if (tabListId && tabListId === listId) {
+            const v = await extractFromTab(tab.id);
+            if (v && v.length > 0) {
+              videos = v;
+              break;
+            }
           }
         }
       }
     } catch (e) {
-      console.warn("Existing tab check failed:", e);
+      console.warn("Open tab check failed:", e);
     }
   }
 
-  // Strategy 2: Remote Fetch
-  if (videos.length === 0) {
-    try {
-      const res = await fetch(url, {
-        headers: { "Accept-Language": "en-US,en;q=0.9" }
-      });
-      if (res.ok) {
-        const html = await res.text();
-        videos = parseVideosFromHtml(html);
-      }
-    } catch (e) {
-      console.warn("Remote fetch failed:", e);
-    }
-  }
-
-  // Strategy 3: Create temporary background tab to render playlist & extract videos
+  // Strategy 3: Temporary background tab fallback specifically for this listId
   if (videos.length === 0 && typeof chrome !== "undefined" && chrome.tabs && chrome.scripting) {
     let tempTab = null;
     try {
       tempTab = await chrome.tabs.create({ url, active: false });
       if (tempTab && tempTab.id) {
         for (let i = 0; i < 15; i++) {
-          await new Promise(r => setTimeout(r, 250));
+          await new Promise(r => setTimeout(r, 400));
           const v = await extractFromTab(tempTab.id);
           if (v && v.length > 0) {
             videos = v;
@@ -305,10 +473,10 @@ async function fetchPlaylist(rawUrl) {
   }
 
   if (videos.length === 0) {
-    throw new Error("Couldn't read that playlist's video list. Make sure the playlist is public/unlisted.");
+    throw new Error("Couldn't read that playlist's video list. Make sure the playlist link is public/unlisted.");
   }
 
-  return videos;
+  return { videos, playlistTitle };
 }
 
 // ---------- message router ----------
@@ -319,7 +487,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === "FETCH_PLAYLIST") {
     fetchPlaylist(msg.url)
-      .then(videos => sendResponse({ ok: true, videos }))
+      .then(res => sendResponse({ ok: true, videos: res.videos, playlistTitle: res.playlistTitle }))
       .catch(err => sendResponse({ ok: false, error: err.message }));
     return true;
   }

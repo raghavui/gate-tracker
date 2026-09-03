@@ -110,18 +110,21 @@
     statusEl.textContent = "Reading playlist…";
     statusEl.className = "status-msg";
     const res = await sendMessage({ type: "FETCH_PLAYLIST", url: url.trim() });
-    if (!res.ok) {
-      statusEl.textContent = res.error;
+    if (!res || !res.ok) {
+      statusEl.textContent = (res && res.error) ? res.error : "Failed to fetch playlist.";
       statusEl.className = "status-msg error";
       return;
     }
     const s = data.subjects.find(x => x.id === subjectId);
+    const plName = res.playlistTitle ? res.playlistTitle : `Playlist (${res.videos.length} videos)`;
     s.playlists.push({
       id: uid(),
-      name: `Playlist (${res.videos.length} videos)`,
+      name: plName,
       url: url.trim(),
       videos: res.videos.map(v => ({ id: v.id, title: v.title, watched: false, watchedAt: null }))
     });
+    statusEl.textContent = "";
+    statusEl.className = "status-msg";
     persist();
   }
 

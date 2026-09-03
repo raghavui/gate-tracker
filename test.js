@@ -34,7 +34,7 @@ test("GATE Syllabi data structure", async () => {
   const syllabiCode = fs.readFileSync(path.join(__dirname, "syllabi.js"), "utf8");
   const context = {};
   new Function("const GATE_SYLLABI = " + syllabiCode.replace(/const GATE_SYLLABI =\s*/, "") + "; return GATE_SYLLABI;")();
-  
+
   // Evaluate syllabi
   const evalSyllabi = new Function(syllabiCode + "\nreturn GATE_SYLLABI;")();
   assert.ok(evalSyllabi.cs, "CS syllabus exists");
@@ -72,18 +72,33 @@ test("Background logic: extractPlaylistId", () => {
 });
 
 test("Background logic: findPlaylistVideos parsing ytInitialData", () => {
-  function findPlaylistVideos(node, out) {
+  function findPlaylistVideos(node, out, seen = new Set()) {
     if (!node || typeof node !== "object") return;
     if (node.playlistVideoRenderer) {
       const v = node.playlistVideoRenderer;
       const videoId = v.videoId;
       const title = (v.title && v.title.runs && v.title.runs[0] && v.title.runs[0].text) ||
-                    (v.title && v.title.simpleText) ||
-                    videoId;
-      if (videoId && title) out.push({ id: videoId, title });
+        (v.title && v.title.simpleText) ||
+        videoId;
+      if (videoId && title && !seen.has(videoId)) {
+        seen.add(videoId);
+        out.push({ id: videoId, title });
+      }
+    }
+    if (node.lockupViewModel) {
+      const lvm = node.lockupViewModel;
+      const videoId = lvm.contentId;
+      const title = lvm.metadata &&
+        lvm.metadata.lockupMetadataViewModel &&
+        lvm.metadata.lockupMetadataViewModel.title &&
+        lvm.metadata.lockupMetadataViewModel.title.content;
+      if (videoId && title && !seen.has(videoId)) {
+        seen.add(videoId);
+        out.push({ id: videoId, title });
+      }
     }
     for (const key in node) {
-      findPlaylistVideos(node[key], out);
+      findPlaylistVideos(node[key], out, seen);
     }
   }
 
@@ -113,6 +128,16 @@ test("Background logic: findPlaylistVideos parsing ytInitialData", () => {
                                     videoId: "video_2",
                                     title: { simpleText: "Lecture 2: Data Structures" }
                                   }
+                                },
+                                {
+                                  lockupViewModel: {
+                                    contentId: "video_3",
+                                    metadata: {
+                                      lockupMetadataViewModel: {
+                                        title: { content: "Lecture 3: Linear Algebra" }
+                                      }
+                                    }
+                                  }
                                 }
                               ]
                             }
@@ -132,9 +157,10 @@ test("Background logic: findPlaylistVideos parsing ytInitialData", () => {
 
   const results = [];
   findPlaylistVideos(sampleYtData, results);
-  assert.equal(results.length, 2);
+  assert.equal(results.length, 3);
   assert.deepEqual(results[0], { id: "video_1", title: "Lecture 1: Intro to CS" });
   assert.deepEqual(results[1], { id: "video_2", title: "Lecture 2: Data Structures" });
+  assert.deepEqual(results[2], { id: "video_3", title: "Lecture 3: Linear Algebra" });
 });
 
 test("Background logic: handleVideoWatched state updates & history", async () => {
@@ -150,23 +176,25 @@ test("Background logic: handleVideoWatched state updates & history", async () =>
 
   const STORAGE_KEY = "gateTrackerData";
   function emptyData() {
-    return { domain: "cs", subjects: [
-      {
-        id: "sub1",
-        name: "Algorithms",
-        playlists: [
-          {
-            id: "pl1",
-            name: "Algo Playlist",
-            url: "http://example.com",
-            videos: [
-              { id: "v100", title: "Sorting Algorithms", watched: false, watchedAt: null },
-              { id: "v101", title: "Graph Algorithms", watched: false, watchedAt: null }
-            ]
-          }
-        ]
-      }
-    ], history: [] };
+    return {
+      domain: "cs", subjects: [
+        {
+          id: "sub1",
+          name: "Algorithms",
+          playlists: [
+            {
+              id: "pl1",
+              name: "Algo Playlist",
+              url: "http://example.com",
+              videos: [
+                { id: "v100", title: "Sorting Algorithms", watched: false, watchedAt: null },
+                { id: "v101", title: "Graph Algorithms", watched: false, watchedAt: null }
+              ]
+            }
+          ]
+        }
+      ], history: []
+    };
   }
 
   async function getData() {
@@ -210,7 +238,7 @@ test("Background logic: handleVideoWatched state updates & history", async () =>
   const now = Date.now();
   // 1. Watch tracked video v100
   await handleVideoWatched({ videoId: "v100", title: "Sorting Algorithms", watchedAt: now });
-  
+
   let currentData = await getData();
   assert.equal(currentData.subjects[0].playlists[0].videos[0].watched, true);
   assert.equal(currentData.subjects[0].playlists[0].videos[0].watchedAt, now);

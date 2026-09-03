@@ -95,7 +95,7 @@
   }
 
   function getTitleFromDOMNode(node) {
-    const titleEl = node.querySelector("#video-title, yt-formatted-string#video-title, a#video-title, span#video-title");
+    const titleEl = node.querySelector("#video-title, yt-formatted-string#video-title, a#video-title, span#video-title, .yt-lockup-metadata-view-model-wiz__title, h3, a[href*='watch?v=']");
     if (titleEl) {
       const attr = titleEl.getAttribute("title");
       if (attr && attr.trim() && !isDurationString(attr)) return attr.trim();
@@ -118,23 +118,60 @@
     const videos = [];
     const seen = new Set();
 
-    const nodes = document.querySelectorAll(
-      "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer"
-    );
-
-    nodes.forEach(node => {
-      const link = node.querySelector("a[href*='watch?v=']");
-      const title = getTitleFromDOMNode(node);
-
-      if (link && title) {
-        const href = link.getAttribute("href") || "";
-        const match = href.match(/v=([a-zA-Z0-9_-]{11})/);
-        if (match && !seen.has(match[1])) {
-          seen.add(match[1]);
-          videos.push({ id: match[1], title });
+    // 1. Try window.ytInitialData if present on page
+    if (typeof window.ytInitialData === "object" && window.ytInitialData) {
+      function findVideos(n) {
+        if (!n || typeof n !== "object") return;
+        if (n.playlistVideoRenderer) {
+          const v = n.playlistVideoRenderer;
+          const id = v.videoId;
+          let title = (v.title && v.title.runs && v.title.runs.map(r => r.text).join("")) ||
+                      (v.title && v.title.simpleText) || id;
+          if (title && isDurationString(title)) title = id;
+          if (id && title && !seen.has(id)) {
+            seen.add(id);
+            videos.push({ id, title: title.trim() });
+          }
         }
+        if (n.lockupViewModel) {
+          const lvm = n.lockupViewModel;
+          const id = lvm.contentId;
+          let title = lvm.metadata &&
+                      lvm.metadata.lockupMetadataViewModel &&
+                      lvm.metadata.lockupMetadataViewModel.title &&
+                      lvm.metadata.lockupMetadataViewModel.title.content;
+          if (title && isDurationString(title)) title = id;
+          if (id && title && !seen.has(id)) {
+            seen.add(id);
+            videos.push({ id, title: title.trim() });
+          }
+        }
+        for (const k in n) findVideos(n[k]);
       }
-    });
+      findVideos(window.ytInitialData);
+    }
+
+    // 2. Try DOM query fallback
+    if (videos.length === 0) {
+      const nodes = document.querySelectorAll(
+        "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, yt-lockup-view-model, ytd-playlist-panel-video-renderer"
+      );
+
+      nodes.forEach(node => {
+        const link = node.querySelector("a[href*='watch?v=']");
+        const title = getTitleFromDOMNode(node);
+
+        if (link) {
+          const href = link.getAttribute("href") || "";
+          const match = href.match(/v=([a-zA-Z0-9_-]{11})/);
+          if (match && !seen.has(match[1])) {
+            const videoTitle = title || match[1];
+            seen.add(match[1]);
+            videos.push({ id: match[1], title: videoTitle });
+          }
+        }
+      });
+    }
 
     return videos;
   }
