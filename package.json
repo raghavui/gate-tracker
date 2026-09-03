@@ -1,0 +1,16 @@
+{
+  "name": "gate-progress-tracker",
+  "version": "1.0.0",
+  "description": "Chrome extension to track GATE preparation progress across YouTube playlists",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test.js"
+  },
+  "keywords": [
+    "chrome-extension",
+    "gate-tracker",
+    "youtube"
+  ],
+  "author": "",
+  "license": "MIT"
+}
