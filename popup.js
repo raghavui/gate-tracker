@@ -11,7 +11,12 @@
     if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) {
       return Promise.resolve({ ok: true, data: { domain: null, subjects: [], history: [] } });
     }
-    return new Promise(resolve => chrome.runtime.sendMessage(msg, resolve));
+    return new Promise(resolve => {
+      chrome.runtime.sendMessage(msg, res => {
+        const err = chrome.runtime.lastError;
+        resolve(res);
+      });
+    });
   }
 
   async function loadData() {

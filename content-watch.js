@@ -34,6 +34,8 @@
         videoId: currentVideoId,
         title: getVideoTitle(),
         watchedAt: Date.now()
+      }, () => {
+        const err = chrome.runtime.lastError;
       });
     }
   }

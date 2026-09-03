@@ -216,6 +216,7 @@ async function extractFromTab(tabId) {
     const response = await new Promise(resolve => {
       const timer = setTimeout(() => resolve(null), 400);
       chrome.tabs.sendMessage(tabId, { type: "EXTRACT_PLAYLIST" }, res => {
+        const err = chrome.runtime.lastError;
         clearTimeout(timer);
         resolve(res);
       });
