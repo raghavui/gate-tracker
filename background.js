@@ -55,12 +55,18 @@ async function handleVideoWatched({ videoId, title, watchedAt }) {
 
 // ---------- playlist scraping ----------
 function extractPlaylistId(url) {
+  if (!url) return null;
+  const trimmed = url.trim();
   try {
-    const u = new URL(url);
-    return u.searchParams.get("list") || url.trim();
-  } catch (e) {
-    return url.trim();
-  }
+    const u = new URL(trimmed);
+    const listParam = u.searchParams.get("list");
+    if (listParam) return listParam;
+  } catch (e) {}
+
+  const m = trimmed.match(/list=([a-zA-Z0-9_-]+)/);
+  if (m) return m[1];
+
+  return trimmed;
 }
 
 function isDurationString(str) {
@@ -132,27 +138,33 @@ function parseVideosFromHtml(html) {
   return unique;
 }
 
-function getTitleFromDOMNode(node) {
-  const titleEl = node.querySelector("#video-title, yt-formatted-string#video-title, a#video-title, span#video-title");
-  if (titleEl) {
-    const attr = titleEl.getAttribute("title");
-    if (attr && attr.trim() && !isDurationString(attr)) return attr.trim();
-    const aria = titleEl.getAttribute("aria-label");
-    if (aria && aria.trim() && !isDurationString(aria)) return aria.trim();
-    const txt = (titleEl.textContent || "").trim();
-    if (txt && !isDurationString(txt) && txt.toLowerCase() !== "youtube") return txt;
-  }
-
-  const linkWithTitle = node.querySelector("a[title]");
-  if (linkWithTitle) {
-    const attr = linkWithTitle.getAttribute("title");
-    if (attr && attr.trim() && !isDurationString(attr)) return attr.trim();
-  }
-
-  return null;
-}
-
 function extractVideosFromPage() {
+  function isDuration(str) {
+    if (!str) return true;
+    const cleaned = str.trim();
+    return /^(\d{1,2}:)?\d{1,2}:\d{2}$/.test(cleaned);
+  }
+
+  function getDomTitle(node) {
+    const titleEl = node.querySelector("#video-title, yt-formatted-string#video-title, a#video-title, span#video-title");
+    if (titleEl) {
+      const attr = titleEl.getAttribute("title");
+      if (attr && attr.trim() && !isDuration(attr)) return attr.trim();
+      const aria = titleEl.getAttribute("aria-label");
+      if (aria && aria.trim() && !isDuration(aria)) return aria.trim();
+      const txt = (titleEl.textContent || "").trim();
+      if (txt && !isDuration(txt) && txt.toLowerCase() !== "youtube") return txt;
+    }
+
+    const linkWithTitle = node.querySelector("a[title]");
+    if (linkWithTitle) {
+      const attr = linkWithTitle.getAttribute("title");
+      if (attr && attr.trim() && !isDuration(attr)) return attr.trim();
+    }
+
+    return null;
+  }
+
   const videos = [];
   const seen = new Set();
 
@@ -165,7 +177,7 @@ function extractVideosFromPage() {
         const id = v.videoId;
         let title = (v.title && v.title.runs && v.title.runs.map(r => r.text).join("")) ||
                     (v.title && v.title.simpleText) || id;
-        if (title && isDurationString(title)) title = id;
+        if (title && isDuration(title)) title = id;
         if (id && title && !seen.has(id)) {
           seen.add(id);
           videos.push({ id, title: title.trim() });
@@ -183,7 +195,7 @@ function extractVideosFromPage() {
     );
     nodes.forEach(node => {
       const link = node.querySelector("a[href*='watch?v=']");
-      const title = getTitleFromDOMNode(node);
+      const title = getDomTitle(node);
 
       if (link && title) {
         const href = link.getAttribute("href") || "";
