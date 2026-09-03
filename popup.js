@@ -229,7 +229,6 @@
           <div class="sright">
             <span class="sfrac">${st.watched}/${st.total}</span>
             <div class="mini-bar"><div class="${barClass}" style="width:${st.pct}%"></div></div>
-            <button class="ghost" data-action="remove-subject" data-subject="${s.id}">✕</button>
           </div>
         </div>
         <div class="subject-body">
