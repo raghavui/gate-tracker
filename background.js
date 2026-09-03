@@ -63,16 +63,26 @@ function extractPlaylistId(url) {
   }
 }
 
+function isDurationString(str) {
+  if (!str) return true;
+  const cleaned = str.trim();
+  return /^(\d{1,2}:)?\d{1,2}:\d{2}$/.test(cleaned);
+}
+
 // Recursively search YouTube's embedded page data for playlist video entries.
 function findPlaylistVideos(node, out) {
   if (!node || typeof node !== "object") return;
   if (node.playlistVideoRenderer) {
     const v = node.playlistVideoRenderer;
     const videoId = v.videoId;
-    const title = (v.title && v.title.runs && v.title.runs[0] && v.title.runs[0].text) ||
-                  (v.title && v.title.simpleText) ||
-                  videoId;
-    if (videoId && title) out.push({ id: videoId, title });
+    let title = (v.title && v.title.runs && v.title.runs.map(r => r.text).join("")) ||
+                (v.title && v.title.simpleText) ||
+                (v.title && v.title.accessibility && v.title.accessibility.accessibilityData && v.title.accessibility.accessibilityData.label) ||
+                videoId;
+    if (title && isDurationString(title)) {
+      title = videoId;
+    }
+    if (videoId && title) out.push({ id: videoId, title: title.trim() });
   }
   for (const key in node) {
     findPlaylistVideos(node[key], out);
@@ -102,7 +112,7 @@ function parseVideosFromHtml(html) {
     while ((m = regex.exec(html)) !== null) {
       const id = m[1];
       const title = m[2] || m[3] || id;
-      if (!seen.has(id)) {
+      if (!seen.has(id) && !isDurationString(title)) {
         seen.add(id);
         videos.push({ id, title });
       }
@@ -122,6 +132,26 @@ function parseVideosFromHtml(html) {
   return unique;
 }
 
+function getTitleFromDOMNode(node) {
+  const titleEl = node.querySelector("#video-title, yt-formatted-string#video-title, a#video-title, span#video-title");
+  if (titleEl) {
+    const attr = titleEl.getAttribute("title");
+    if (attr && attr.trim() && !isDurationString(attr)) return attr.trim();
+    const aria = titleEl.getAttribute("aria-label");
+    if (aria && aria.trim() && !isDurationString(aria)) return aria.trim();
+    const txt = (titleEl.textContent || "").trim();
+    if (txt && !isDurationString(txt) && txt.toLowerCase() !== "youtube") return txt;
+  }
+
+  const linkWithTitle = node.querySelector("a[title]");
+  if (linkWithTitle) {
+    const attr = linkWithTitle.getAttribute("title");
+    if (attr && attr.trim() && !isDurationString(attr)) return attr.trim();
+  }
+
+  return null;
+}
+
 function extractVideosFromPage() {
   const videos = [];
   const seen = new Set();
@@ -133,11 +163,12 @@ function extractVideosFromPage() {
       if (n.playlistVideoRenderer) {
         const v = n.playlistVideoRenderer;
         const id = v.videoId;
-        const title = (v.title && v.title.runs && v.title.runs[0] && v.title.runs[0].text) ||
-                      (v.title && v.title.simpleText) || id;
+        let title = (v.title && v.title.runs && v.title.runs.map(r => r.text).join("")) ||
+                    (v.title && v.title.simpleText) || id;
+        if (title && isDurationString(title)) title = id;
         if (id && title && !seen.has(id)) {
           seen.add(id);
-          videos.push({ id, title });
+          videos.push({ id, title: title.trim() });
         }
       }
       for (const k in n) findVideos(n[k]);
@@ -148,21 +179,18 @@ function extractVideosFromPage() {
   // 2. Try DOM elements ytd-playlist-video-renderer
   if (videos.length === 0) {
     const nodes = document.querySelectorAll(
-      "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, a#video-title, a[href*='watch?v=']"
+      "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer"
     );
     nodes.forEach(node => {
-      let link = node.tagName === "A" ? node : node.querySelector("a[href*='watch?v=']");
-      let titleEl = node.querySelector("#video-title, span#video-title") || link;
+      const link = node.querySelector("a[href*='watch?v=']");
+      const title = getTitleFromDOMNode(node);
 
-      if (link) {
+      if (link && title) {
         const href = link.getAttribute("href") || "";
         const match = href.match(/v=([a-zA-Z0-9_-]{11})/);
         if (match && !seen.has(match[1])) {
-          const title = (titleEl ? (titleEl.getAttribute("title") || titleEl.textContent || "") : "").trim();
-          if (title && title.length > 0 && title.toLowerCase() !== "youtube") {
-            seen.add(match[1]);
-            videos.push({ id: match[1], title });
-          }
+          seen.add(match[1]);
+          videos.push({ id: match[1], title });
         }
       }
     });

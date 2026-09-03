@@ -86,27 +86,50 @@
     }
   });
 
+  function isDurationString(str) {
+    if (!str) return true;
+    const cleaned = str.trim();
+    return /^(\d{1,2}:)?\d{1,2}:\d{2}$/.test(cleaned);
+  }
+
+  function getTitleFromDOMNode(node) {
+    const titleEl = node.querySelector("#video-title, yt-formatted-string#video-title, a#video-title, span#video-title");
+    if (titleEl) {
+      const attr = titleEl.getAttribute("title");
+      if (attr && attr.trim() && !isDurationString(attr)) return attr.trim();
+      const aria = titleEl.getAttribute("aria-label");
+      if (aria && aria.trim() && !isDurationString(aria)) return aria.trim();
+      const txt = (titleEl.textContent || "").trim();
+      if (txt && !isDurationString(txt) && txt.toLowerCase() !== "youtube") return txt;
+    }
+
+    const linkWithTitle = node.querySelector("a[title]");
+    if (linkWithTitle) {
+      const attr = linkWithTitle.getAttribute("title");
+      if (attr && attr.trim() && !isDurationString(attr)) return attr.trim();
+    }
+
+    return null;
+  }
+
   function extractPlaylistVideosFromDOM() {
     const videos = [];
     const seen = new Set();
 
-    const elements = document.querySelectorAll(
-      "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, a#video-title, a[href*='watch?v=']"
+    const nodes = document.querySelectorAll(
+      "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer"
     );
 
-    elements.forEach(el => {
-      let link = el.tagName === "A" ? el : el.querySelector("a[href*='watch?v=']");
-      let titleEl = el.querySelector("#video-title, span#video-title") || link;
+    nodes.forEach(node => {
+      const link = node.querySelector("a[href*='watch?v=']");
+      const title = getTitleFromDOMNode(node);
 
-      if (link) {
+      if (link && title) {
         const href = link.getAttribute("href") || "";
         const match = href.match(/v=([a-zA-Z0-9_-]{11})/);
         if (match && !seen.has(match[1])) {
-          const title = (titleEl ? (titleEl.getAttribute("title") || titleEl.textContent || "") : "").trim();
-          if (title && title.length > 0 && title.toLowerCase() !== "youtube") {
-            seen.add(match[1]);
-            videos.push({ id: match[1], title });
-          }
+          seen.add(match[1]);
+          videos.push({ id: match[1], title });
         }
       }
     });
