@@ -186,19 +186,39 @@ async function fetchPlaylist(rawUrl) {
     console.warn("Remote fetch failed, trying tab inspection:", e);
   }
 
-  // Strategy 2: Tab Script Execution Fallback (if user has YouTube open in browser)
-  if (videos.length === 0 && typeof chrome !== "undefined" && chrome.tabs && chrome.scripting) {
+  // Strategy 2: Active & Open Tab Communication
+  if (videos.length === 0 && typeof chrome !== "undefined" && chrome.tabs) {
     try {
-      const tabs = await chrome.tabs.query({ url: "*://*.youtube.com/*" });
+      const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
-        if (tab.id) {
-          const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: extractVideosFromPage
-          });
-          if (results && results[0] && results[0].result && results[0].result.length > 0) {
-            videos = results[0].result;
-            break;
+        if (tab.id && tab.url && (tab.url.includes("youtube.com") || tab.url.includes("youtu.be"))) {
+          // 2a. Message content script on open YouTube tab
+          try {
+            const response = await new Promise(resolve => {
+              const timer = setTimeout(() => resolve(null), 400);
+              chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PLAYLIST" }, res => {
+                clearTimeout(timer);
+                resolve(res);
+              });
+            });
+            if (response && response.ok && response.videos && response.videos.length > 0) {
+              videos = response.videos;
+              break;
+            }
+          } catch (err) {}
+
+          // 2b. Fallback to chrome.scripting.executeScript
+          if (chrome.scripting) {
+            try {
+              const results = await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                func: extractVideosFromPage
+              });
+              if (results && results[0] && results[0].result && results[0].result.length > 0) {
+                videos = results[0].result;
+                break;
+              }
+            } catch (err) {}
           }
         }
       }

@@ -76,4 +76,41 @@
       if (attachedVideoEl || a2 > 20) clearInterval(p2);
     }, 500);
   });
+
+  // Listener for background request to extract playlist videos from active page
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.type === "EXTRACT_PLAYLIST") {
+      const videos = extractPlaylistVideosFromDOM();
+      sendResponse({ ok: true, videos });
+      return true;
+    }
+  });
+
+  function extractPlaylistVideosFromDOM() {
+    const videos = [];
+    const seen = new Set();
+
+    const elements = document.querySelectorAll(
+      "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, a#video-title, a[href*='watch?v=']"
+    );
+
+    elements.forEach(el => {
+      let link = el.tagName === "A" ? el : el.querySelector("a[href*='watch?v=']");
+      let titleEl = el.querySelector("#video-title, span#video-title") || link;
+
+      if (link) {
+        const href = link.getAttribute("href") || "";
+        const match = href.match(/v=([a-zA-Z0-9_-]{11})/);
+        if (match && !seen.has(match[1])) {
+          const title = (titleEl ? (titleEl.getAttribute("title") || titleEl.textContent || "") : "").trim();
+          if (title && title.length > 0 && title.toLowerCase() !== "youtube") {
+            seen.add(match[1]);
+            videos.push({ id: match[1], title });
+          }
+        }
+      }
+    });
+
+    return videos;
+  }
 })();
