@@ -57,15 +57,13 @@ async function handleVideoWatched({ videoId, title, watchedAt }) {
 function extractPlaylistId(url) {
   try {
     const u = new URL(url);
-    return u.searchParams.get("list");
+    return u.searchParams.get("list") || url.trim();
   } catch (e) {
-    return null;
+    return url.trim();
   }
 }
 
 // Recursively search YouTube's embedded page data for playlist video entries.
-// This walks the whole object tree rather than a fixed path, since YouTube's
-// internal structure shifts between updates.
 function findPlaylistVideos(node, out) {
   if (!node || typeof node !== "object") return;
   if (node.playlistVideoRenderer) {
@@ -128,23 +126,8 @@ function extractVideosFromPage() {
   const videos = [];
   const seen = new Set();
 
-  // 1. Try DOM elements ytd-playlist-video-renderer
-  const nodes = document.querySelectorAll("ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer");
-  nodes.forEach(node => {
-    const titleEl = node.querySelector("#video-title, a#video-title, span#video-title");
-    const linkEl = node.querySelector("a[href*='watch?v=']");
-    if (linkEl && titleEl) {
-      const href = linkEl.getAttribute("href") || "";
-      const match = href.match(/v=([a-zA-Z0-9_-]{11})/);
-      if (match && !seen.has(match[1])) {
-        seen.add(match[1]);
-        videos.push({ id: match[1], title: titleEl.textContent.trim() });
-      }
-    }
-  });
-
-  // 2. Try window.ytInitialData if available on page
-  if (videos.length === 0 && window.ytInitialData) {
+  // 1. Try window.ytInitialData if available on page
+  if (typeof window.ytInitialData === "object" && window.ytInitialData) {
     function findVideos(n) {
       if (!n || typeof n !== "object") return;
       if (n.playlistVideoRenderer) {
@@ -162,7 +145,58 @@ function extractVideosFromPage() {
     findVideos(window.ytInitialData);
   }
 
+  // 2. Try DOM elements ytd-playlist-video-renderer
+  if (videos.length === 0) {
+    const nodes = document.querySelectorAll(
+      "ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, a#video-title, a[href*='watch?v=']"
+    );
+    nodes.forEach(node => {
+      let link = node.tagName === "A" ? node : node.querySelector("a[href*='watch?v=']");
+      let titleEl = node.querySelector("#video-title, span#video-title") || link;
+
+      if (link) {
+        const href = link.getAttribute("href") || "";
+        const match = href.match(/v=([a-zA-Z0-9_-]{11})/);
+        if (match && !seen.has(match[1])) {
+          const title = (titleEl ? (titleEl.getAttribute("title") || titleEl.textContent || "") : "").trim();
+          if (title && title.length > 0 && title.toLowerCase() !== "youtube") {
+            seen.add(match[1]);
+            videos.push({ id: match[1], title });
+          }
+        }
+      }
+    });
+  }
+
   return videos;
+}
+
+async function extractFromTab(tabId) {
+  try {
+    const response = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve(null), 400);
+      chrome.tabs.sendMessage(tabId, { type: "EXTRACT_PLAYLIST" }, res => {
+        clearTimeout(timer);
+        resolve(res);
+      });
+    });
+    if (response && response.ok && response.videos && response.videos.length > 0) {
+      return response.videos;
+    }
+  } catch (err) {}
+
+  if (typeof chrome !== "undefined" && chrome.scripting) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: extractVideosFromPage
+      });
+      if (results && results[0] && results[0].result && results[0].result.length > 0) {
+        return results[0].result;
+      }
+    } catch (err) {}
+  }
+  return [];
 }
 
 async function fetchPlaylist(rawUrl) {
@@ -171,64 +205,66 @@ async function fetchPlaylist(rawUrl) {
 
   let videos = [];
 
-  // Strategy 1: Remote Fetch
-  try {
-    const res = await fetch(url, {
-      headers: {
-        "Accept-Language": "en-US,en;q=0.9"
-      }
-    });
-    if (res.ok) {
-      const html = await res.text();
-      videos = parseVideosFromHtml(html);
-    }
-  } catch (e) {
-    console.warn("Remote fetch failed, trying tab inspection:", e);
-  }
-
-  // Strategy 2: Active & Open Tab Communication
-  if (videos.length === 0 && typeof chrome !== "undefined" && chrome.tabs) {
+  // Strategy 1: Check existing open YouTube tabs matching playlist
+  if (typeof chrome !== "undefined" && chrome.tabs) {
     try {
       const tabs = await chrome.tabs.query({});
       for (const tab of tabs) {
-        if (tab.id && tab.url && (tab.url.includes("youtube.com") || tab.url.includes("youtu.be"))) {
-          // 2a. Message content script on open YouTube tab
-          try {
-            const response = await new Promise(resolve => {
-              const timer = setTimeout(() => resolve(null), 400);
-              chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PLAYLIST" }, res => {
-                clearTimeout(timer);
-                resolve(res);
-              });
-            });
-            if (response && response.ok && response.videos && response.videos.length > 0) {
-              videos = response.videos;
-              break;
-            }
-          } catch (err) {}
-
-          // 2b. Fallback to chrome.scripting.executeScript
-          if (chrome.scripting) {
-            try {
-              const results = await chrome.scripting.executeScript({
-                target: { tabId: tab.id },
-                func: extractVideosFromPage
-              });
-              if (results && results[0] && results[0].result && results[0].result.length > 0) {
-                videos = results[0].result;
-                break;
-              }
-            } catch (err) {}
+        if (tab.id && tab.url && typeof tab.url === "string" && (tab.url.includes("youtube.com") || tab.url.includes("youtu.be"))) {
+          if (tab.url.includes(listId)) {
+            videos = await extractFromTab(tab.id);
+            if (videos.length > 0) break;
           }
         }
       }
     } catch (e) {
-      console.warn("Tab execution fallback failed:", e);
+      console.warn("Existing tab check failed:", e);
+    }
+  }
+
+  // Strategy 2: Remote Fetch
+  if (videos.length === 0) {
+    try {
+      const res = await fetch(url, {
+        headers: { "Accept-Language": "en-US,en;q=0.9" }
+      });
+      if (res.ok) {
+        const html = await res.text();
+        videos = parseVideosFromHtml(html);
+      }
+    } catch (e) {
+      console.warn("Remote fetch failed:", e);
+    }
+  }
+
+  // Strategy 3: Create temporary background tab to render playlist & extract videos
+  if (videos.length === 0 && typeof chrome !== "undefined" && chrome.tabs && chrome.scripting) {
+    let tempTab = null;
+    try {
+      tempTab = await chrome.tabs.create({ url, active: false });
+      if (tempTab && tempTab.id) {
+        for (let i = 0; i < 15; i++) {
+          await new Promise(r => setTimeout(r, 250));
+          const v = await extractFromTab(tempTab.id);
+          if (v && v.length > 0) {
+            videos = v;
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Background tab rendering fallback failed:", e);
+    } finally {
+      if (tempTab && tempTab.id) {
+        try {
+          await chrome.tabs.remove(tempTab.id);
+        } catch (e) {}
+      }
     }
   }
 
   if (videos.length === 0) {
-    throw new Error("Couldn't read that playlist's video list. Make sure the playlist is public/unlisted or open it in a YouTube tab.");
+    throw new Error("Couldn't read that playlist's video list. Make sure the playlist is public/unlisted.");
   }
 
   return videos;
