@@ -1,29 +1,149 @@
-# GATE Progress Tracker (Chrome extension)
+# GATE Progress Tracker 🚀
 
-## Install it (unpacked — this isn't on the Chrome Web Store)
+A Chrome extension designed to help GATE aspirants track their
+preparation progress through YouTube playlists.
 
-1. Unzip this folder somewhere permanent (don't delete it after install — Chrome loads the extension from these files).
-2. Open Chrome and go to `chrome://extensions`.
-3. Turn on **Developer mode** (top-right toggle).
-4. Click **Load unpacked** and select this folder.
-5. Pin the extension (puzzle-piece icon → pin) so it's easy to open.
+The extension lets you organize subjects, connect YouTube playlists,
+automatically track watched videos, and monitor your overall preparation
+progress.
 
-## How to use it
+## ✨ Features
 
-1. Click the extension icon. Pick your GATE domain (CS, EC, EE, ME, CE, or Custom) — the standard subject list loads in automatically. You can add/remove subjects any time.
-2. Open a subject, paste a YouTube playlist URL into "Paste a YouTube playlist URL", and click **Fetch**. The extension reads the playlist's video list directly from the page.
-3. Just watch your videos on YouTube normally. When a video from an assigned playlist plays to about 95%, it's marked watched automatically — no need to check anything by hand. You can still tick/untick videos manually if you want to correct something.
-4. Check the **History** tab for a timestamped log of everything it's detected, and the **Progress** tab for per-subject and overall completion.
+-   📚 Support for multiple GATE domains such as CS, EC, EE, ME and CE
+-   📖 Add and manage subjects
+-   ▶️ Assign YouTube playlists to subjects
+-   👀 Automatically detect watched YouTube videos
+-   📊 Track subject-wise and overall progress
+-   ✅ Manually mark videos as watched/unwatched
+-   🕒 Maintain watch history with timestamps
+-   💾 Store user data locally in the browser
+-   🎯 Simple dashboard for monitoring preparation
 
-## How the automatic tracking works
+## 📥 Installation
 
-- A small script runs only on `youtube.com/watch` pages, watches the video player's progress, and reports back once you cross ~95% of a video.
-- It matches the video by its YouTube video ID against the playlists you've assigned to subjects. A watched video that isn't part of any assigned playlist still shows up in History, just marked "not in a tracked playlist," so you can see the extension is working even before you've assigned everything.
-- Playlist reading works by fetching the public playlist page and parsing its video list, so it only works for playlists that are public or unlisted-with-link (not private ones you don't have direct page access to).
+### Option 1: Direct GitHub ZIP (Easiest)
 
-## Known limitations
+1. Click the green **Code** button at the top of [github.com/raghavui/gate-tracker](https://github.com/raghavui/gate-tracker) and select **Download ZIP** (or download `gate-tracker-main.zip`).
+2. Extract the downloaded ZIP file on your computer.
+3. Open Google Chrome and go to `chrome://extensions`.
+4. Enable **Developer mode** (toggle switch in the top-right corner).
+5. Click **Load unpacked** (top-left corner).
+6. Select the extracted `gate-tracker-main` folder.
+7. Pin **GATE Progress Tracker** from the Chrome extensions menu (🧩 icon).
 
-- This is unpacked/local only — it isn't reviewed or published, so treat it as a personal tool, not something to install from an untrusted source.
-- YouTube periodically changes its page structure; if playlist-reading ever stops working, that's usually why.
-- Detection needs the tab to be open and playing — it doesn't track videos watched in incognito mode unless you explicitly allow the extension there (`chrome://extensions` → Details → "Allow in Incognito").
-- All data is stored locally in your browser (`chrome.storage.local`) — nothing is sent anywhere else.
+### Option 2: Download Release ZIP
+
+1. Go to the [Releases](../../releases) page.
+2. Download `gate-tracker-v1.0.0.zip` from **Assets**.
+3. Extract the ZIP file.
+4. Open Chrome, go to `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select the extracted folder.
+
+> The extension is distributed as a ZIP package for installation as an unpacked Chrome extension. It does not currently require Chrome Web Store publishing.
+
+## 🖥️ How It Works
+
+1.  Select your GATE domain.
+2.  Add the subjects you are preparing.
+3.  Add the corresponding YouTube playlists.
+4.  Start watching the videos.
+5.  The extension tracks your progress.
+6.  View subject-wise and overall completion from the dashboard.
+
+## 🔒 Privacy
+
+-   User progress is stored locally in the browser.
+-   The extension does not intentionally send personal tracking data to
+    an external server.
+-   YouTube is used to access and track the relevant video/playlist
+    information.
+
+## ⚠️ Known Limitations
+
+-   YouTube may change its page structure, which can affect playlist or
+    video detection.
+-   Video tracking requires the YouTube tab to remain open and the video
+    to be playing.
+-   Private YouTube playlists cannot be read.
+-   The extension currently requires Chrome Developer Mode for
+    installation.
+
+## 🛠️ Technology
+
+-   HTML
+-   CSS
+-   JavaScript
+-   Chrome Extensions API
+-   YouTube integration
+-   Chrome Local Storage
+
+## 📂 Project Structure
+
+``` text
+gate-tracker/
+├── manifest.json
+├── background.js
+├── content-watch.js
+├── popup.html
+├── popup.js
+├── popup.css
+├── syllabi.js
+├── README.md
+└── ...
+```
+
+## 🧑‍💻 Development
+
+To run the project locally:
+
+1.  Clone the repository:
+
+    ``` bash
+    git clone https://github.com/raghavui/gate-tracker.git
+    ```
+
+2.  Open Chrome and go to:
+
+    `chrome://extensions`
+
+3.  Enable **Developer mode**.
+
+4.  Click **Load unpacked**.
+
+5.  Select the cloned `gate-tracker` folder.
+
+6.  Make changes to the source files and reload the extension from the
+    Chrome extensions page.
+
+## 📦 Releases
+
+Stable versions are available on the [GitHub Releases](../../releases)
+page.
+
+Current release:
+
+**v1.0.0 --- Initial Release**
+
+## 🗺️ Future Improvements
+
+-   Chrome Web Store publication
+-   Improved YouTube detection
+-   More detailed analytics
+-   Better progress visualization
+-   Additional GATE exam features
+-   Improved extension UI/UX
+
+## 🤝 Contributing
+
+Contributions, suggestions, and bug reports are welcome.
+
+If you find a bug or have an idea for improvement, feel free to open an
+issue or submit a pull request.
+
+## ⭐ Support
+
+If you find **GATE Progress Tracker** useful, consider giving the
+repository a ⭐ on GitHub.
+
+------------------------------------------------------------------------
+
+Made for GATE aspirants 🎓
