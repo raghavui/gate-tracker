@@ -3,7 +3,7 @@
   "name": "GATE Progress Tracker",
   "version": "1.0.0",
   "description": "Pick your GATE domain, assign your YouTube playlists to each subject, and this tracks what you've watched automatically.",
-  "permissions": ["storage"],
+  "permissions": ["storage", "scripting"],
   "host_permissions": [
     "https://www.youtube.com/*",
     "https://youtube.com/*"

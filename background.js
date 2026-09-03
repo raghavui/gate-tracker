@@ -81,44 +81,137 @@ function findPlaylistVideos(node, out) {
   }
 }
 
+function parseVideosFromHtml(html) {
+  const videos = [];
+  const seen = new Set();
+
+  const match = html.match(/(?:var\s+|window\["ytInitialData"\]\s*=\s*|ytInitialData\s*=\s*)({[\s\S]*?});\s*<\/script>/) ||
+                html.match(/ytInitialData\s*=\s*({[\s\S]*?});/);
+
+  if (match) {
+    try {
+      const data = JSON.parse(match[1]);
+      findPlaylistVideos(data, videos);
+    } catch (e) {
+      // Ignore JSON parse error, try regex fallback
+    }
+  }
+
+  // Regex fallback directly on HTML
+  if (videos.length === 0) {
+    const regex = /"playlistVideoRenderer":\s*\{"videoId":"([^"]+)".*?"title":\s*\{(?:"runs":\[\{"text":"([^"]+)"\}]|"simpleText":"([^"]+)")/g;
+    let m;
+    while ((m = regex.exec(html)) !== null) {
+      const id = m[1];
+      const title = m[2] || m[3] || id;
+      if (!seen.has(id)) {
+        seen.add(id);
+        videos.push({ id, title });
+      }
+    }
+  }
+
+  // De-duplicate by video id, preserving order.
+  const unique = [];
+  const idSet = new Set();
+  videos.forEach(v => {
+    if (!idSet.has(v.id)) {
+      idSet.add(v.id);
+      unique.push(v);
+    }
+  });
+
+  return unique;
+}
+
+function extractVideosFromPage() {
+  const videos = [];
+  const seen = new Set();
+
+  // 1. Try DOM elements ytd-playlist-video-renderer
+  const nodes = document.querySelectorAll("ytd-playlist-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer");
+  nodes.forEach(node => {
+    const titleEl = node.querySelector("#video-title, a#video-title, span#video-title");
+    const linkEl = node.querySelector("a[href*='watch?v=']");
+    if (linkEl && titleEl) {
+      const href = linkEl.getAttribute("href") || "";
+      const match = href.match(/v=([a-zA-Z0-9_-]{11})/);
+      if (match && !seen.has(match[1])) {
+        seen.add(match[1]);
+        videos.push({ id: match[1], title: titleEl.textContent.trim() });
+      }
+    }
+  });
+
+  // 2. Try window.ytInitialData if available on page
+  if (videos.length === 0 && window.ytInitialData) {
+    function findVideos(n) {
+      if (!n || typeof n !== "object") return;
+      if (n.playlistVideoRenderer) {
+        const v = n.playlistVideoRenderer;
+        const id = v.videoId;
+        const title = (v.title && v.title.runs && v.title.runs[0] && v.title.runs[0].text) ||
+                      (v.title && v.title.simpleText) || id;
+        if (id && title && !seen.has(id)) {
+          seen.add(id);
+          videos.push({ id, title });
+        }
+      }
+      for (const k in n) findVideos(n[k]);
+    }
+    findVideos(window.ytInitialData);
+  }
+
+  return videos;
+}
+
 async function fetchPlaylist(rawUrl) {
   const listId = extractPlaylistId(rawUrl) || rawUrl.trim();
   const url = `https://www.youtube.com/playlist?list=${encodeURIComponent(listId)}`;
 
-  const res = await fetch(url, { credentials: "omit" });
-  if (!res.ok) {
-    throw new Error(`Couldn't load that playlist page (status ${res.status}).`);
-  }
-  const html = await res.text();
+  let videos = [];
 
-  const match = html.match(/var ytInitialData\s*=\s*({.*?});<\/script>/s);
-  if (!match) {
-    throw new Error("Couldn't read that playlist's video list. It may be private or unlisted-without-access.");
-  }
-
-  let data;
+  // Strategy 1: Remote Fetch
   try {
-    data = JSON.parse(match[1]);
+    const res = await fetch(url, {
+      headers: {
+        "Accept-Language": "en-US,en;q=0.9"
+      }
+    });
+    if (res.ok) {
+      const html = await res.text();
+      videos = parseVideosFromHtml(html);
+    }
   } catch (e) {
-    throw new Error("Couldn't parse that playlist's data.");
+    console.warn("Remote fetch failed, trying tab inspection:", e);
   }
 
-  const videos = [];
-  findPlaylistVideos(data, videos);
-
-  // De-duplicate by video id, preserving order.
-  const seen = new Set();
-  const unique = videos.filter(v => {
-    if (seen.has(v.id)) return false;
-    seen.add(v.id);
-    return true;
-  });
-
-  if (unique.length === 0) {
-    throw new Error("That playlist looks empty, or its page structure isn't readable right now.");
+  // Strategy 2: Tab Script Execution Fallback (if user has YouTube open in browser)
+  if (videos.length === 0 && typeof chrome !== "undefined" && chrome.tabs && chrome.scripting) {
+    try {
+      const tabs = await chrome.tabs.query({ url: "*://*.youtube.com/*" });
+      for (const tab of tabs) {
+        if (tab.id) {
+          const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: extractVideosFromPage
+          });
+          if (results && results[0] && results[0].result && results[0].result.length > 0) {
+            videos = results[0].result;
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Tab execution fallback failed:", e);
+    }
   }
 
-  return unique;
+  if (videos.length === 0) {
+    throw new Error("Couldn't read that playlist's video list. Make sure the playlist is public/unlisted or open it in a YouTube tab.");
+  }
+
+  return videos;
 }
 
 // ---------- message router ----------
